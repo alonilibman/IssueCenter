@@ -1,46 +1,58 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from "groq-sdk";
+
+const groq = new Groq({ apiKey: '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' });
 
 export async function POST(req) {
   try {
-    const { text } = await req.json();
-    const GEMINI_KEY = 'AIzaSyCduwNsvDWSjvIf0n-Fx1Z2N1ubx5kdY4I';
-    const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+    const { text, existingIssues = [] } = await req.json();
+
+    // --- חסימה ידנית ראשונית (לפני ה-AI) ---
+    const cleanText = text.trim().toLowerCase();
     
-    // Shift to the Lite model to bypass the standard Flash 20-request limit
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    // חסימת שטויות קצרות (כמו "l" או "j")
+    if (cleanText.length < 3) {
+      return NextResponse.json({ decision: "REJECT", reason: "Input is too short/nonsense." });
+    }
 
-    const prompt = `
-      Analyze this input: "${text}"
-      
-      Rule 1: If the input is random keyboard mashing (e.g., "asdfgh") or complete gibberish, return EXACTLY this JSON:
-      {"error": "Unreadable or invalid input. Please enter a real issue."}
-      
-      Rule 2: Translate non-English input to English. Treat the translation as the primary input.
-      
-      Rule 3: Invent a broad, general category name (1-2 words max). Avoid hyper-specific tags.
-      
-      Rule 4: Assign Priority from this exact scale: S, A+, A, B+, B, C+, C, D+, D, F.
-      
-      Rule 5: Provide a one-sentence reason for the priority.
-      
-      Return ONLY a raw JSON object. Do not use markdown formatting or backticks. Example:
-      {"priority": "A", "category": "Hardware", "reason": "Explanation.", "title": "Translated or original text"}
-    `;
+    // חסימת אלימות בסיסית (כמו "kill")
+    const bannedWords = ['kill', 'death', 'murder', 'hit'];
+    if (bannedWords.some(word => cleanText.includes(word))) {
+      return NextResponse.json({ decision: "REJECT", reason: "Safety violation: Violence is not allowed." });
+    }
 
-    const result = await model.generateContent(prompt);
-    let responseText = result.response.text();
-    
-    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
-    
-    const startIndex = responseText.indexOf('{');
-    const endIndex = responseText.lastIndexOf('}') + 1;
-    const cleanJson = responseText.substring(startIndex, endIndex);
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: `You are a Strict Database Manager. 
+          DATABASE: ${JSON.stringify(existingIssues)}
 
-    return NextResponse.json(JSON.parse(cleanJson));
+          MANDATORY RULES:
+          1. REJECT if: greetings (hi, hello, מה קורה), gibberish, or jokes.
+          2. DEDUPLICATE: If the input is semantically the same as an issue in the DATABASE above, REJECT.
+          3. CATEGORY: You MUST provide a 1-word broad category.
+          4. TITLE: Use the exact user input: "${text}".
 
+          JSON ONLY RESPONSE:
+          {
+            "decision": "CREATE" | "REJECT",
+            "category": "string",
+            "priority": "S/A/B/C/F",
+            "reason": "short explanation",
+            "title": "string"
+          }`
+        },
+        { role: "user", content: text }
+      ],
+      model: "llama-3.3-70b-versatile",
+      response_format: { type: "json_object" },
+      temperature: 0, 
+    });
+
+    const brain = JSON.parse(completion.choices[0].message.content);
+    return NextResponse.json(brain);
   } catch (error) {
-    console.error("DEBUG - FULL ERROR:", error);
-    return NextResponse.json({ error: `API Crash: ${error.message}` });
+    return NextResponse.json({ decision: "REJECT", reason: "System Error" });
   }
 }

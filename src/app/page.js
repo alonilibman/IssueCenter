@@ -33,7 +33,7 @@ export default function IssueCenter() {
       });
       return await res.json();
     } catch (e) {
-      return { error: 'Connection failed' };
+      return { error: 'Failed to reach analyzer.' };
     }
   }
 
@@ -41,37 +41,91 @@ export default function IssueCenter() {
     e.preventDefault();
     if (!userInput.trim()) return;
     setLoading(true);
-    
-    const analysis = await getAiAnalysis(userInput);
 
-    if (analysis.error) {
-      alert(analysis.error);
-      setLoading(false);
-      return;
-    }
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: userInput, 
+          existingIssues: issues.map(i => i.title) 
+        })
+      });
+      
+      const brain = await res.json();
 
-    const finalPriority = analysis.priority && analysis.priority.trim() !== '' ? analysis.priority : 'C';
-    const finalCategory = analysis.category && analysis.category.trim() !== '' ? analysis.category : 'General';
-    const finalReason = analysis.reason && analysis.reason.trim() !== '' ? analysis.reason : 'No reasoning provided.';
-    const finalTitle = analysis.title && analysis.title.trim() !== '' ? analysis.title : userInput;
-
-    const { error } = await supabase.from('problems').insert([
-      { 
-        title: finalTitle, 
-        priority: finalPriority, 
-        category: finalCategory, 
-        reason: finalReason,
-        status: 'Open' 
+      // THE GATE: If the AI says REJECT, we stop here.
+      if (brain.decision === "REJECT") {
+        console.log("Brain Blocked:", brain.reason);
+        alert(`Access Denied: ${brain.reason}`);
+        setLoading(false);
+        return; // <--- This prevents the insert
       }
-    ]);
 
-    if (!error) {
-      setUserInput('');
-      fetchIssues();
-    } else {
-      console.error("Supabase Insert Error:", error);
+      // If we passed the gate, insert into Supabase
+      const { error } = await supabase.from('problems').insert([{ 
+        title: userInput, // Keep your original text
+        priority: brain.priority || 'C', 
+        category: brain.category || 'General', 
+        reason: brain.reason 
+      }]);
+
+      if (!error) {
+        setUserInput('');
+        fetchIssues();
+      }
+    } catch (err) {
+      alert("Analysis failed.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!userInput.trim()) return;
+    setLoading(true);
+
+    // לוג לבדיקה אם אנחנו שולחים את הרשימה הקיימת
+    console.log("Existing items being checked:", issues.map(i => i.title));
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: userInput, 
+          existingIssues: issues.map(i => i.title) 
+        })
+      });
+      
+      const brain = await res.json();
+      console.log("AI Decision:", brain);
+
+      // --- המחסום הסופי ---
+      if (brain.decision === "REJECT") {
+        alert(`Blocked: ${brain.reason}`);
+        setLoading(false);
+        return; // הקוד עוצר כאן ולא מגיע ל-Supabase!
+      }
+
+      // רק אם עברנו את המחסום - מכניסים ל-DB
+      const { error } = await supabase.from('problems').insert([{ 
+        title: userInput, 
+        priority: brain.priority || 'C', 
+        category: brain.category || 'General', 
+        reason: brain.reason 
+      }]);
+
+      if (!error) {
+        setUserInput('');
+        fetchIssues();
+      }
+    } catch (err) {
+      console.error("Critical Failure:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function deleteIssue(id) {
