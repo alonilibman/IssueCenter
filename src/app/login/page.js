@@ -109,7 +109,7 @@ export default function AuthPage() {
 
           {/* מסלול אדמין: קוד סודי בלבד */}
           {role === 'admin' && (
-            <input className="w-full p-8 rounded-2xl border-4 border-red-500 focus:border-black outline-none font-black text-3xl text-center" placeholder="67" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
+            <input className="w-full p-8 rounded-2xl border-4 border-red-500 focus:border-black outline-none font-black text-3xl text-center" placeholder="Enter Secret Code" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
           )}
 
           <button onClick={handleLogin} disabled={loading} className="w-full py-6 bg-black text-white rounded-[2rem] font-black text-xl hover:bg-emerald-500 transition-all active:scale-95">
