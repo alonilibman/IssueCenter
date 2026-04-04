@@ -1,45 +1,35 @@
 import { NextResponse } from 'next/server';
 import Groq from "groq-sdk";
 
-const groq = new Groq({ apiKey: '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' });
+const groq = new Groq({ 
+  apiKey: process.env.GROQ_API_KEY 
+});
 
 export async function POST(req) {
   try {
     const { text, existingIssues = [] } = await req.json();
 
-    // --- חסימה ידנית ראשונית (לפני ה-AI) ---
-    const cleanText = text.trim().toLowerCase();
-    
-    // חסימת שטויות קצרות (כמו "l" או "j")
-    if (cleanText.length < 3) {
-      return NextResponse.json({ decision: "REJECT", reason: "Input is too short/nonsense." });
-    }
-
-    // חסימת אלימות בסיסית (כמו "kill")
-    const bannedWords = ['kill', 'death', 'murder', 'hit'];
-    if (bannedWords.some(word => cleanText.includes(word))) {
-      return NextResponse.json({ decision: "REJECT", reason: "Safety violation: Violence is not allowed." });
-    }
-
     const completion = await groq.chat.completions.create({
       messages: [
         {
           role: "system",
-          content: `You are a Strict Database Manager. 
-          DATABASE: ${JSON.stringify(existingIssues)}
+          content: `You are a Logic-Based Database Auditor. 
+          STRICT FILTERS:
+          1. REJECT if: The input is a greeting (e.g., "מה קורה", "hi"), social talk, non english , or random letters. These are NOT issues.
+          2. DEDUPLICATION RULES:
+             - Conceptual similarity is NOT enough to reject. 
+             - Only REJECT as a duplicate if the new input means the EXACT same thing as an existing issue.
+             - Example: "Too many poor people" and "People are too wealthy" are OPPOSITES. They are both UNIQUE issues. Do NOT merge or reject them.
+             - Example: "My car won't start" and "Engine failure" are the SAME. REJECT.
 
-          MANDATORY RULES:
-          1. REJECT if: greetings (hi, hello, מה קורה), gibberish, or jokes.
-          2. DEDUPLICATE: If the input is semantically the same as an issue in the DATABASE above, REJECT.
-          3. CATEGORY: You MUST provide a 1-word broad category.
-          4. TITLE: Use the exact user input: "${text}".
+          3. TITLE: Use the exact user input: "${text}".
 
-          JSON ONLY RESPONSE:
+          RESPONSE SCHEMA (JSON ONLY):
           {
             "decision": "CREATE" | "REJECT",
-            "category": "string",
-            "priority": "S/A/B/C/F",
-            "reason": "short explanation",
+            "reason": "Short logic-based explanation",
+            "category": "One word (e.g., Society, Tech, Personal)",
+            "priority": "a mark from 0 to 100 indicating importance",
             "title": "string"
           }`
         },
@@ -51,6 +41,13 @@ export async function POST(req) {
     });
 
     const brain = JSON.parse(completion.choices[0].message.content);
+    
+    // מעצור ידני נוסף לשפה חברתית בעברית
+    const socialTrash = ['מה קורה', 'מה קשורה', 'שלום', 'היי', 'אהלן'];
+    if (socialTrash.some(word => text.includes(word))) {
+      return NextResponse.json({ decision: "REJECT", reason: "Social greeting detected." });
+    }
+
     return NextResponse.json(brain);
   } catch (error) {
     return NextResponse.json({ decision: "REJECT", reason: "System Error" });
