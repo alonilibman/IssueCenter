@@ -4,16 +4,12 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://eiokesokgiypxkdyhomd.supabase.co';
 const supabaseKey = 'sb_publishable_wurz1buikXlEnKBc3vZnQA_Z2sijqgb'; 
-
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-const TIER_WEIGHTS = { 'S': 10, 'A+': 9, 'A': 8, 'B+': 7, 'B': 6, 'C+': 5, 'C': 4, 'D+': 3, 'D': 2, 'F': 1 };
 
 export default function IssueCenter() {
   const [issues, setIssues] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
-  
   const [filterCategory, setFilterCategory] = useState('All');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -24,22 +20,17 @@ export default function IssueCenter() {
     if (data) setIssues(data);
   }
 
-  async function getAiAnalysis(text) {
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      return await res.json();
-    } catch (e) {
-      return { error: 'Failed to reach analyzer.' };
-    }
+  function getPriorityStyles(score) {
+    if (score >= 90) return 'bg-amber-400 text-amber-950 border-amber-500 shadow-[0_0_15px_rgba(251,191,36,0.2)]';
+    if (score >= 70) return 'bg-emerald-500 text-white border-emerald-600';
+    if (score >= 40) return 'bg-blue-500 text-white border-blue-600';
+    if (score >= 20) return 'bg-slate-400 text-white border-slate-500';
+    return 'bg-rose-600 text-white border-rose-700 animate-pulse';
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!userInput.trim()) return;
+    if (!userInput.trim() || loading) return;
     setLoading(true);
 
     try {
@@ -48,71 +39,22 @@ export default function IssueCenter() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           text: userInput, 
-          existingIssues: issues.map(i => i.title) 
+          existingIssues: issues.map(i => ({ title: i.title })) 
         })
       });
       
       const brain = await res.json();
 
-      // THE GATE: If the AI says REJECT, we stop here.
       if (brain.decision === "REJECT") {
-        console.log("Brain Blocked:", brain.reason);
-        alert(`Access Denied: ${brain.reason}`);
+        // --- REJECTION REASON SHOWN HERE ---
+        alert(`❌ REJECTED\n\nReason: ${brain.reason}`);
         setLoading(false);
-        return; // <--- This prevents the insert
+        return; 
       }
 
-      // If we passed the gate, insert into Supabase
-      const { error } = await supabase.from('problems').insert([{ 
-        title: userInput, // Keep your original text
-        priority: brain.priority || 'C', 
-        category: brain.category || 'General', 
-        reason: brain.reason 
-      }]);
-
-      if (!error) {
-        setUserInput('');
-        fetchIssues();
-      }
-    } catch (err) {
-      alert("Analysis failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!userInput.trim()) return;
-    setLoading(true);
-
-    // לוג לבדיקה אם אנחנו שולחים את הרשימה הקיימת
-    console.log("Existing items being checked:", issues.map(i => i.title));
-
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          text: userInput, 
-          existingIssues: issues.map(i => i.title) 
-        })
-      });
-      
-      const brain = await res.json();
-      console.log("AI Decision:", brain);
-
-      // --- המחסום הסופי ---
-      if (brain.decision === "REJECT") {
-        alert(`Blocked: ${brain.reason}`);
-        setLoading(false);
-        return; // הקוד עוצר כאן ולא מגיע ל-Supabase!
-      }
-
-      // רק אם עברנו את המחסום - מכניסים ל-DB
       const { error } = await supabase.from('problems').insert([{ 
         title: userInput, 
-        priority: brain.priority || 'C', 
+        priority: brain.priority, 
         category: brain.category || 'General', 
         reason: brain.reason 
       }]);
@@ -122,7 +64,7 @@ export default function IssueCenter() {
         fetchIssues();
       }
     } catch (err) {
-      console.error("Critical Failure:", err);
+      alert("System failure. Check console.");
     } finally {
       setLoading(false);
     }
@@ -133,107 +75,108 @@ export default function IssueCenter() {
     if (!error) fetchIssues();
   }
 
-  function getTierColor(tier) {
-    if (tier === 'S') return 'bg-yellow-400 text-yellow-900 shadow-[0_0_10px_rgba(250,204,21,0.5)]';
-    if (tier?.startsWith('A')) return 'bg-emerald-500 text-white';
-    if (tier?.startsWith('B')) return 'bg-blue-500 text-white';
-    if (tier?.startsWith('C')) return 'bg-slate-400 text-white';
-    if (tier?.startsWith('D')) return 'bg-orange-400 text-white';
-    if (tier === 'F') return 'bg-red-600 text-white animate-pulse';
-    return 'bg-slate-200 text-slate-600';
-  }
-
   const dynamicCategories = ['All', ...new Set(issues.map(i => i.category).filter(Boolean))];
 
   const processedIssues = issues
     .filter(issue => filterCategory === 'All' || issue.category === filterCategory)
     .sort((a, b) => {
       if (sortBy === 'newest') return new Date(b.created_at) - new Date(a.created_at);
-      
-      const weightA = TIER_WEIGHTS[a.priority] || 0;
-      const weightB = TIER_WEIGHTS[b.priority] || 0;
-      
-      return sortBy === 'tier-desc' ? weightB - weightA : weightA - weightB;
+      return sortBy === 'high-priority' ? b.priority - a.priority : a.priority - b.priority;
     });
 
   return (
-    <div className="max-w-4xl mx-auto p-10 font-sans bg-white min-h-screen text-slate-900">
-      <header className="mb-12 text-center">
-        <h1 className="text-6xl font-black italic tracking-tighter">IssueCenter</h1>
-        <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Context Intelligence</p>
+    <div className="max-w-5xl mx-auto p-6 md:p-12 font-sans bg-[#FBFBFE] min-h-screen text-slate-900 selection:bg-black selection:text-white">
+      
+      {/* --- HEADER --- */}
+      <header className="mb-16 flex flex-col items-center">
+        <div className="bg-red-500 text-white px-4 py-1 rounded-full text-[20px] font-black tracking-[0.4em] mb-4 uppercase">
+          Issues that are fixable with software
+        </div>
+        <h1 className="text-7xl font-black tracking-tighter italic leading-none text-center">
+          ISSUE CENTER
+        </h1>
       </header>
 
-      <form onSubmit={handleSubmit} className="mb-10 flex gap-3">
-        <input 
-          className="flex-1 p-5 rounded-2xl border-2 border-slate-100 focus:border-black outline-none bg-slate-50 text-xl transition-all"
-          value={userInput} 
-          onChange={e => setUserInput(e.target.value)}
-          placeholder={loading ? "Analyzing..." : "Log an issue..."}
-          disabled={loading}
-        />
-        <button className="bg-black text-white px-10 rounded-2xl font-black hover:bg-slate-800 transition-all disabled:opacity-20 active:scale-95">
-          {loading ? "..." : "POST"}
-        </button>
-      </form>
-
-      {dynamicCategories.length > 1 && (
-        <div className="flex flex-col md:flex-row justify-between items-center bg-slate-50 p-4 rounded-2xl mb-8 border border-slate-100 gap-4">
-          <div className="flex flex-wrap gap-2">
-            {dynamicCategories.map(cat => (
-              <button 
-                key={cat}
-                onClick={() => setFilterCategory(cat)}
-                className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
-                  filterCategory === cat 
-                    ? 'bg-black text-white' 
-                    : 'bg-white border border-slate-200 text-slate-500 hover:border-black'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-          
-          <select 
-            value={sortBy} 
-            onChange={(e) => setSortBy(e.target.value)}
-            className="bg-white border border-slate-200 text-sm font-bold p-2 rounded-xl outline-none cursor-pointer hover:border-black transition-all"
+      {/* --- INPUT AREA --- */}
+      <section className="mb-16">
+        <form onSubmit={handleSubmit} className="relative group">
+          <input 
+            className="w-full p-8 pr-32 rounded-[2rem] border-4 border-slate-100 focus:border-black bg-white text-2xl font-medium transition-all shadow-xl focus:shadow-2xl outline-none placeholder:text-slate-300"
+            value={userInput} 
+            onChange={e => setUserInput(e.target.value)}
+            placeholder={loading ? "Analyzing..." : "Describe the problem..."}
+            disabled={loading}
+          />
+          <button 
+            type="submit"
+            className="absolute right-4 top-4 bottom-4 px-8 bg-black text-white rounded-[1.5rem] font-black hover:bg-emerald-500 transition-all active:scale-95 disabled:opacity-30"
+            disabled={loading}
           >
-            <option value="newest">Newest First</option>
-            <option value="tier-desc">Highest Tier (S to F)</option>
-            <option value="tier-asc">Lowest Tier (F to S)</option>
-          </select>
+            {loading ? "..." : "LOG"}
+          </button>
+        </form>
+      </section>
+
+      {/* --- FILTERS --- */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 px-2">
+        <div className="flex flex-wrap gap-2 justify-center">
+          {dynamicCategories.map(cat => (
+            <button 
+              key={cat}
+              onClick={() => setFilterCategory(cat)}
+              className={`px-5 py-2 rounded-full text-xs font-bold transition-all border-2 ${
+                filterCategory === cat 
+                  ? 'bg-black text-white border-black' 
+                  : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
-      )}
+        
+        <select 
+          value={sortBy} 
+          onChange={(e) => setSortBy(e.target.value)}
+          className="bg-transparent border-b-2 border-slate-200 text-sm font-black p-2 outline-none cursor-pointer hover:border-black transition-all uppercase"
+        >
+          <option value="newest">Newest First</option>
+          <option value="high-priority">Priority: 100 → 0</option>
+          <option value="low-priority">Priority: 0 → 100</option>
+        </select>
+      </div>
 
-      <div className="space-y-4">
+      {/* --- ISSUE GRID --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {processedIssues.map(issue => (
-          <div key={issue.id} className="p-6 border border-slate-100 rounded-3xl shadow-sm hover:shadow-md transition-all group bg-white">
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex gap-3 items-center">
-                <div className="relative group/priority">
-                  <span className={`cursor-help px-3 py-1.5 rounded-xl text-xs font-black tracking-widest ${getTierColor(issue.priority)}`}>
-                    {issue.priority || 'N/A'}
-                  </span>
-                  <div className="absolute bottom-full mb-2 left-0 w-56 p-3 bg-black text-white text-xs rounded-xl opacity-0 group-hover/priority:opacity-100 transition-opacity pointer-events-none z-10 shadow-2xl">
-                    {issue.reason}
-                  </div>
-                </div>
-
-                <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">
-                  {issue.category}
+          <div key={issue.id} className="relative p-8 bg-white border-4 border-slate-50 rounded-[2.5rem] shadow-sm hover:shadow-xl hover:border-black transition-all group overflow-hidden">
+            
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex items-center gap-2">
+                <span className={`px-4 py-1.5 rounded-full text-[10px] uppercase font-black border-2 ${getPriorityStyles(issue.priority)}`}>
+                  Priority Score: {issue.priority}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1.5 rounded-full">
+                  Category: {issue.category}
                 </span>
               </div>
-              <button onClick={() => deleteIssue(issue.id)} className="opacity-0 group-hover:opacity-100 text-[10px] font-black text-red-300 hover:text-red-600 transition-all">DELETE</button>
+              <button 
+                onClick={() => deleteIssue(issue.id)} 
+                className="opacity-0 group-hover:opacity-100 text-[10px] font-black text-slate-300 hover:text-red-500 transition-all"
+              >
+                DELETE
+              </button>
             </div>
-            
-            <h3 className="text-xl font-bold leading-tight text-slate-800">{issue.title}</h3>
+
+            <h3 className="text-2xl font-bold leading-tight text-slate-800">
+              {issue.title}
+            </h3>
           </div>
         ))}
         
         {processedIssues.length === 0 && (
-          <div className="text-center p-10 text-slate-400 font-bold uppercase text-sm tracking-widest">
-            No issues found
+          <div className="col-span-full py-20 text-center border-4 border-dashed border-slate-100 rounded-[3rem]">
+            <p className="text-slate-300 font-black text-2xl italic">NO DATA LOGGED</p>
           </div>
         )}
       </div>
