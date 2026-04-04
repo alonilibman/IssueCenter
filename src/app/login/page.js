@@ -13,11 +13,11 @@ export default function AuthPage() {
   // States לכל סוג
   const [email, setEmail] = useState('');       
   const [password, setPassword] = useState(''); 
-  const [username, setUsername] = useState('');     // חדש לפרטי
+  const [username, setUsername] = useState('');     
   const [companyName, setCompanyName] = useState(''); 
   const [secretCode, setSecretCode] = useState('');   
 
-  const handleLogin = async () => {
+  const handleAccess = async () => {
     setLoading(true);
     let authData = { email: '', password: '' };
     let displayName = '';
@@ -40,12 +40,12 @@ export default function AuthPage() {
       displayName = 'ADMIN';
     }
 
-    // ניסיון התחברות
-    const { error: loginError } = await supabase.auth.signInWithPassword(authData);
+    // שלב 1: ניסיון התחברות
+    const { data: signInData, error: loginError } = await supabase.auth.signInWithPassword(authData);
     
     if (loginError) {
-      // הרשמה אוטומטית אם לא קיים
-      const { error: signUpError } = await supabase.auth.signUp({
+      // שלב 2: אם החשבון לא קיים, נרשום אותו אוטומטית (Registration Logic)
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         ...authData,
         options: { data: { role, display_name: displayName } }
       });
@@ -53,18 +53,26 @@ export default function AuthPage() {
       if (signUpError) {
         alert(signUpError.message);
       } else {
-        // שמירה בטבלת פרופילים
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData?.user) {
-            await supabase.from('profiles').insert([
-                { id: userData.user.id, username: displayName, role: role, company_name: role === 'company' ? companyName : null }
-            ]);
+        // הוספת הפרופיל ל-DB במידה והרגע נרשם
+        if (signUpData?.user) {
+          await supabase.from('profiles').insert([
+            { id: signUpData.user.id, username: displayName, role: role, company_name: role === 'company' ? companyName : null }
+          ]);
         }
         router.push('/');
       }
     } else {
       router.push('/');
     }
+    setLoading(false);
+  };
+
+  // פונקציית כניסה כאורח
+  const handleAnonymous = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signInAnonymously();
+    if (error) alert(error.message);
+    else router.push('/');
     setLoading(false);
   };
 
@@ -81,7 +89,7 @@ export default function AuthPage() {
             <button
               key={r}
               onClick={() => { setRole(r); setSecretCode(''); setUsername(''); setCompanyName(''); }}
-              className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase transition-all ${role === r ? 'bg-black text-white' : 'text-slate-400'}`}
+              className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase transition-all ${role === r ? 'bg-black text-white' : 'text-slate-400 hover:text-black font-bold'}`}
             >
               {r}
             </button>
@@ -90,30 +98,36 @@ export default function AuthPage() {
 
         <div className="space-y-4">
           
-          {/* מסלול פרטי: שם משתמש, אימייל, סיסמה */}
           {role === 'private' && (
             <>
-              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold" placeholder="USERNAME" value={username} onChange={e => setUsername(e.target.value)} />
-              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold" placeholder="EMAIL" type="email" value={email} onChange={e => setEmail(e.target.value)} />
-              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold" placeholder="PASSWORD" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold text-lg" placeholder="USERNAME" value={username} onChange={e => setUsername(e.target.value)} />
+              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold text-lg" placeholder="EMAIL" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold text-lg" placeholder="PASSWORD" type="password" value={password} onChange={e => setPassword(e.target.value)} />
             </>
           )}
 
-          {/* מסלול חברה: שם חברה, קוד סודי */}
           {role === 'company' && (
             <>
-              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold" placeholder="COMPANY NAME" value={companyName} onChange={e => setCompanyName(e.target.value)} />
-              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold" placeholder="SECRET CODE" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
+              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold text-lg" placeholder="COMPANY NAME" value={companyName} onChange={e => setCompanyName(e.target.value)} />
+              <input className="w-full p-5 rounded-2xl border-4 border-slate-100 focus:border-black outline-none font-bold text-lg" placeholder="SECRET CODE" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
             </>
           )}
 
-          {/* מסלול אדמין: קוד סודי בלבד */}
           {role === 'admin' && (
-            <input className="w-full p-8 rounded-2xl border-4 border-red-500 focus:border-black outline-none font-black text-3xl text-center" placeholder="Enter Secret Code" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
+            <input className="w-full p-8 rounded-2xl border-4 border-red-500 focus:border-black outline-none font-black text-3xl text-center placeholder:text-red-200" placeholder="Enter Secret Code" type="password" value={secretCode} onChange={e => setSecretCode(e.target.value)} />
           )}
 
-          <button onClick={handleLogin} disabled={loading} className="w-full py-6 bg-black text-white rounded-[2rem] font-black text-xl hover:bg-emerald-500 transition-all active:scale-95">
+          <button onClick={handleAccess} disabled={loading} className="w-full py-6 bg-black text-white rounded-[2rem] font-black text-xl hover:bg-emerald-500 transition-all active:scale-95 shadow-lg">
             {loading ? 'WAIT...' : 'ACCESS CENTER'}
+          </button>
+
+          {/* כפתור אורח שביקשת להחזיר */}
+          <button 
+            onClick={handleAnonymous} 
+            disabled={loading}
+            className="w-full py-4 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-black transition-all"
+          >
+            Enter as Guest (Anonymous)
           </button>
         </div>
       </div>
