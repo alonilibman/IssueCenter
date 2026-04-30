@@ -9,37 +9,45 @@ export async function POST(req) {
   try {
     const { text, existingIssues = [] } = await req.json();
 
-    // 1. Convert existing issues into a searchable string for the AI
-    const issuesList = existingIssues.length > 0 
-      ? existingIssues.map(issue => `"${issue.title}"`).join(", ") 
+    const issuesContext = existingIssues.length > 0 
+      ? existingIssues.map(i => `ID: ${i.id} | Title: "${i.title}" | Current Score: ${i.priority}`).join("\n") 
       : "None";
 
     const completion = await groq.chat.completions.create({
       messages: [
         {
           role: "system",
-          content: `You are a Logic Auditor. Your goal is to keep the database clean.
-          
-          ### EXISTING DATABASE ENTRIES (DO NOT DUPLICATE):
-          [${issuesList}]
+          content: `You are a deeply cynical, ruthless Software Triage Director. Your job is to aggressively gatekeep priority scores based on REAL-WORLD SURVIVAL. 
+
+          Most user requests are completely unimportant. You must be incredibly stingy with high scores. 
+
+          ### EXISTING BACKLOG (DO NOT DUPLICATE):
+          ${issuesContext}
 
           ### REJECTION CRITERIA (BE STRICT):
-          - **SIMILARITY**: REJECT if the input is saying the same thing as any entry in the list above , even if phrased differently , but if the context is different and the problem is not the same then ACCEPT it , even if most of the words match an existing entry.
-          - for example waiting for a cab is not the same as waiting for a bus or for a vacation , so accpeted those kind "similar" , but waiting for a cab and waiting for a taxi is the same problem and should be rejected if one of them is already in the database.
-          - **NOT SOFTWARE**: REJECT if the problem requires physical labor, hardware repair, or manual human action (e.g., "Fix fire trucks", "Paint a wall", "Buy groceries").
-          - **TOO VAGUE**: REJECT if it's a general goal without a specific software function (e.g., "Make people happy").
-          - **NON-ENGLISH/GIBBERISH**: REJECT if the input is Hebrew, gibberish, or social greetings.
+          - SIMILARITY: REJECT if it's the exact same core problem as an existing entry.
+          - NOT SOFTWARE: REJECT if it requires physical labor, hardware repair, or manual human action.
+          - GIBBERISH/VAGUE: REJECT if it's not a tangible software issue or is just a social greeting.
 
-          ### ACCEPTANCE CRITERIA:
-          - ONLY ACCEPT if it is a specific problem solvable via a CODE/APP solution (e.g., "A system to log fire truck engine hours").
+          ### THE HARSH REALITY SCORING RUBRIC:
+          - 95-100 (APOCALYPSE): "Life ending". Total system collapse, massive data deletion, catastrophic security breach (e.g., "All user passwords leaked", "Main database dropped"). Should almost never be used.
+          - 75-94 (CRITICAL BLOCKER): Core revenue-generating or vital operations are completely halted for everyone, and NO workaround exists (e.g., "Payment gateway is completely down").
+          - 40-74 (PAIN POINT): Things we CAN live without for a while, but they cause significant friction, cost money, or waste a lot of time. Workarounds might exist but they suck.
+          - 15-39 (NICE TO HAVE): "It would be good if there was a solution for this." Quality of life improvements, minor workflow optimizations, new feature requests that aren't urgent.
+          - 0-14 (TRIVIA): Completely unimportant. We can easily live without this forever. Minor cosmetic issues, typos, vanity features, or personal preferences (e.g., "Change the border radius", "Add dark mode").
+
+          ### RECALIBRATION RULE:
+          If this new issue proves that older issues are actually less important than previously thought, you MUST lower their scores. Force the backlog to conform to the harsh reality rubric above.
 
           ### OUTPUT (JSON ONLY):
           {
             "decision": "CREATE" | "REJECT",
-            "reason": "Brutal 1-sentence logic",
-            "category": "check if it fits into an existing category or create a new generic one",
-            "priority": 0-100,
-            "title": "${text}"
+            "reason": "Brutal 1-sentence logic justifying your low score or rejection",
+            "category": "Epic Name (e.g., 'UI/UX', 'Database', 'Authentication')",
+            "priority": <number 0-100 based strictly on the harsh rubric>,
+            "recalibrations": [
+              { "id": "<id of existing issue>", "newPriority": <number>, "reason": "Why you downgraded/upgraded it" }
+            ]
           }`
         },
         { role: "user", content: text }

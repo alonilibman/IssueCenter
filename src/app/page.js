@@ -2,6 +2,10 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
+import { Outfit } from 'next/font/google'; 
+
+// Initialize the Outfit font
+const outfit = Outfit({ subsets: ['latin'], weight: ['300', '400', '500', '600', '700', '900'] });
 
 const supabaseUrl = 'https://eiokesokgiypxkdyhomd.supabase.co';
 const supabaseKey = 'sb_publishable_wurz1buikXlEnKBc3vZnQA_Z2sijqgb'; 
@@ -76,13 +80,24 @@ export default function IssueCenter() {
   }
 
   async function toggleBeer(issueId, currentAssignedId) {
-    if (!user) return;
+    if (!user) {
+      alert("You must be logged in to do this.");
+      return;
+    }
+
     const isAssignedToMe = currentAssignedId === user.id;
     const updateData = isAssignedToMe 
       ? { assigned_to_id: null, assigned_to_name: null } 
-      : { assigned_to_id: user.id, assigned_to_name: user.user_metadata?.display_name || user.email?.split('@')[0] };
-    await supabase.from('problems').update(updateData).eq('id', issueId);
-    fetchIssues();
+      : { assigned_to_id: user.id, assigned_to_name: user.user_metadata?.display_name || user.email?.split('@')[0] || 'Unknown User' };
+
+    try {
+      const { error } = await supabase.from('problems').update(updateData).eq('id', issueId);
+      if (error) throw error;
+      fetchIssues();
+    } catch (err) {
+      console.error("Supabase Update Error:", err);
+      alert(`❌ Failed to update assignment: ${err.message}`);
+    }
   }
 
   async function deleteIssue(issueId, ownerId) {
@@ -98,24 +113,82 @@ export default function IssueCenter() {
     e.preventDefault();
     if (!userInput.trim() || loading) return;
     setLoading(true);
+    
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: userInput, existingIssues: issues.map(i => ({ title: i.title })) })
+        body: JSON.stringify({ 
+          text: userInput, 
+          existingIssues: issues.map(i => ({ id: i.id, title: i.title, priority: i.priority })) 
+        })
       });
+      
       const brain = await res.json();
+      
       if (brain.decision === "REJECT") {
         alert(`❌ REJECTED: ${brain.reason}`);
       } else {
         await supabase.from('problems').insert([{ 
-          title: userInput, priority: brain.priority, category: brain.category, 
-          reason: brain.reason, user_id: user.id, author_email: user.email 
+          title: userInput, 
+          priority: brain.priority, 
+          category: brain.category, 
+          reason: brain.reason, 
+          user_id: user.id, 
+          author_email: user.email 
         }]);
+
+        if (brain.recalibrations && brain.recalibrations.length > 0) {
+          const updatePromises = brain.recalibrations.map(recal => 
+            supabase.from('problems').update({ priority: recal.newPriority }).eq('id', recal.id)
+          );
+          await Promise.all(updatePromises);
+        }
+
         setUserInput('');
-        fetchIssues();
+        fetchIssues(); 
       }
-    } finally { setLoading(false); }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to process issue.");
+    } finally { 
+      setLoading(false); 
+    }
+  }
+
+  // --- ADMIN FUNCTION: RECALIBRATE ENTIRE BOARD ---
+  async function handleAdminRefresh() {
+    if (!confirm("Admin Override: Are you sure you want the AI to recalibrate all scores? This might take a few seconds.")) return;
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: "ADMIN COMMAND: Review the entire backlog and recalibrate all priorities to ensure they are accurately weighted against each other. Output recalibrations for EVERY issue if needed.", 
+          existingIssues: issues.map(i => ({ id: i.id, title: i.title, priority: i.priority })) 
+        })
+      });
+      
+      const brain = await res.json();
+      
+      if (brain.recalibrations && brain.recalibrations.length > 0) {
+        const updatePromises = brain.recalibrations.map(recal => 
+          supabase.from('problems').update({ priority: recal.newPriority }).eq('id', recal.id)
+        );
+        await Promise.all(updatePromises);
+        alert(`✅ Recalibrated ${brain.recalibrations.length} issues successfully.`);
+        fetchIssues(); 
+      } else {
+        alert("✅ AI determined that current scores are already perfectly balanced.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to recalibrate board.");
+    } finally { 
+      setLoading(false); 
+    }
   }
 
   // Apply all filters and sorting
@@ -132,10 +205,10 @@ export default function IssueCenter() {
     })
     .sort((a, b) => sortBy === 'high-priority' ? b.priority - a.priority : a.priority - b.priority);
 
-  if (!user) return <div className="h-screen flex items-center justify-center font-medium text-[#172B4D]">BOOTING SYSTEM...</div>;
+  if (!user) return <div className={`h-screen flex items-center justify-center font-medium text-[#172B4D] ${outfit.className}`}>BOOTING SYSTEM...</div>;
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-12 font-sans bg-[#FAFBFC] min-h-screen text-[#172B4D]">
+    <div className={`max-w-6xl mx-auto p-4 md:p-12 bg-[#FAFBFC] min-h-screen text-[#172B4D] ${outfit.className}`}>
       
       {/* --- IDENTITY BAR --- */}
       <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-sm border border-[#DFE1E6] shadow-sm">
@@ -169,15 +242,15 @@ export default function IssueCenter() {
 
       {/* HEADER */}
       <header className="mb-8">
-        <h1 className="text-3xl font-semibold text-[#172B4D] mb-1">IssueCenter</h1>
-        <p className="text-sm text-[#5E6C84]">For Software Fixes</p>
+        <h1 className="text-3xl font-bold text-[#172B4D] mb-1">IssueCenter</h1>
+        <p className="text-sm font-medium text-[#5E6C84]">For Software Fixes</p>
       </header>
 
       {/* INPUT */}
       <section className="mb-8">
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input 
-            className="flex-1 px-4 py-2 rounded-[3px] border-2 border-[#DFE1E6] bg-white text-sm text-[#172B4D] focus:border-[#4C9AFF] focus:outline-none transition-colors placeholder:text-[#97A0AF]" 
+            className="flex-1 px-4 py-2 rounded-[3px] border-2 border-[#DFE1E6] bg-white text-sm font-medium text-[#172B4D] focus:border-[#4C9AFF] focus:outline-none transition-colors placeholder:text-[#97A0AF]" 
             value={userInput} 
             onChange={e => setUserInput(e.target.value)} 
             placeholder="Describe a problem..." 
@@ -185,7 +258,7 @@ export default function IssueCenter() {
           />
           <button 
             type="submit" 
-            className="px-6 py-2 bg-[#0052CC] text-white rounded-[3px] font-medium hover:bg-[#0047B3] transition-colors disabled:opacity-50" 
+            className="px-6 py-2 bg-[#0052CC] text-white rounded-[3px] font-semibold hover:bg-[#0047B3] transition-colors disabled:opacity-50" 
             disabled={loading}
           >
             {loading ? "..." : "PUBLISH"}
@@ -196,15 +269,15 @@ export default function IssueCenter() {
       {/* FILTERS & SORTERS */}
       <div className="flex flex-col mb-4 gap-4 bg-white p-4 border border-[#DFE1E6] rounded-sm shadow-sm">
         
-        {/* Top Row: Categories & Sort */}
+        {/* Top Row: Categories, Sort, and Admin Tools */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-xs font-semibold text-[#5E6C84] uppercase tracking-wider">Epic:</span>
+            <span className="text-xs font-bold text-[#5E6C84] uppercase tracking-wider">Epic:</span>
             {['All', ...new Set(issues.map(i => i.category).filter(Boolean))].map(cat => (
               <button 
                 key={cat} 
                 onClick={() => setFilterCategory(cat)} 
-                className={`px-3 py-1 rounded-[3px] text-sm font-medium transition-colors ${
+                className={`px-3 py-1 rounded-[3px] text-sm font-semibold transition-colors ${
                   filterCategory === cat 
                   ? 'bg-[#E6EFFC] text-[#0052CC]' 
                   : 'bg-[#EBECF0] text-[#42526E] hover:bg-[#DFE1E6]'
@@ -216,11 +289,24 @@ export default function IssueCenter() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-xs font-semibold text-[#5E6C84] uppercase tracking-wider">Sort:</span>
+            {/* ONLY ADMINS SEE THIS BUTTON */}
+            {user?.user_metadata?.role === 'admin' && (
+              <button 
+                onClick={handleAdminRefresh}
+                disabled={loading}
+                className="bg-[#EAE6FF] text-[#403294] hover:bg-[#DFD8FD] border border-[#DFD8FD] px-3 py-1.5 rounded-[3px] text-sm font-bold transition-colors disabled:opacity-50 flex items-center gap-2"
+                title="Force AI to recalibrate all scores"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                {loading ? "RECALIBRATING..." : "RECALIBRATE SCORES"}
+              </button>
+            )}
+
+            <span className="text-xs font-bold text-[#5E6C84] uppercase tracking-wider pl-2 border-l border-[#DFE1E6]">Sort:</span>
             <select 
               value={sortBy} 
               onChange={(e) => setSortBy(e.target.value)}
-              className="bg-[#FAFBFC] border border-[#DFE1E6] text-[#172B4D] text-sm rounded-[3px] px-2 py-1.5 outline-none focus:border-[#4C9AFF] hover:bg-[#EBECF0] cursor-pointer"
+              className="bg-[#FAFBFC] border border-[#DFE1E6] text-[#172B4D] font-medium text-sm rounded-[3px] px-2 py-1.5 outline-none focus:border-[#4C9AFF] hover:bg-[#EBECF0] cursor-pointer"
             >
               <option value="high-priority">Highest Importance First</option>
               <option value="low-priority">Lowest Importance First</option>
@@ -231,13 +317,13 @@ export default function IssueCenter() {
         {/* Bottom Row: Additional Filters */}
         <div className="flex flex-wrap gap-6 pt-3 border-t border-[#DFE1E6]">
           <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold text-[#5E6C84] uppercase tracking-wider">Status:</span>
+            <span className="text-xs font-bold text-[#5E6C84] uppercase tracking-wider">Status:</span>
             <div className="flex gap-2">
               {['All', 'Available', 'Taken'].map(status => (
                 <button 
                   key={status} 
                   onClick={() => setFilterStatus(status)} 
-                  className={`px-3 py-1 rounded-[3px] text-sm font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-[3px] text-sm font-semibold transition-colors ${
                     filterStatus === status 
                     ? 'bg-[#E6EFFC] text-[#0052CC]' 
                     : 'bg-transparent text-[#42526E] hover:bg-[#EBECF0]'
@@ -250,13 +336,13 @@ export default function IssueCenter() {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold text-[#5E6C84] uppercase tracking-wider">Author:</span>
+            <span className="text-xs font-bold text-[#5E6C84] uppercase tracking-wider">Author:</span>
             <div className="flex gap-2">
               {['All', 'Mine'].map(author => (
                 <button 
                   key={author} 
                   onClick={() => setFilterAuthor(author)} 
-                  className={`px-3 py-1 rounded-[3px] text-sm font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-[3px] text-sm font-semibold transition-colors ${
                     filterAuthor === author 
                     ? 'bg-[#E6EFFC] text-[#0052CC]' 
                     : 'bg-transparent text-[#42526E] hover:bg-[#EBECF0]'
@@ -274,7 +360,7 @@ export default function IssueCenter() {
       {/* ISSUES LIST (Smart Rows) */}
       <div className="flex flex-col gap-2">
         {processedIssues.length === 0 ? (
-          <div className="p-8 text-center text-[#5E6C84] bg-white border border-[#DFE1E6] rounded-sm">
+          <div className="p-8 text-center text-[#5E6C84] font-medium bg-white border border-[#DFE1E6] rounded-sm">
             No issues found matching your filters.
           </div>
         ) : (
@@ -309,15 +395,18 @@ export default function IssueCenter() {
                   Importance Score: {issue.priority}
                 </span>
 
-                {/* AUTHOR */}
-                <div className="flex items-center gap-2 shrink-0">
+                {/* AUTHOR / PUBLISHER (Tooltip updated here to only show username) */}
+                <div 
+                  className="flex items-center gap-2 shrink-0 cursor-help" 
+                  title={`Publisher: ${issue.author_email?.split('@')[0]}`}
+                >
                   <div className="w-6 h-6 rounded-full overflow-hidden bg-[#F4F5F7]">
                     <SmartAvatar 
                       role="private" 
                       email={issue.author_email} 
                     />
                   </div>
-                  <span className="text-xs text-[#5E6C84]" title={issue.author_email}>
+                  <span className="text-xs font-medium text-[#5E6C84]">
                     {issue.author_email?.split('@')[0]}
                   </span>
                 </div>
@@ -326,17 +415,17 @@ export default function IssueCenter() {
                 <div className="flex justify-end shrink-0 min-w-[120px]">
                   {issue.assigned_to_name ? (
                     <div className="flex flex-col items-end gap-1">
-                      <div className="bg-[#FFFAE6] text-[#FF8B00] border border-[#FFE380] px-2 py-1 rounded-[3px] font-semibold text-[11px] max-w-[140px] truncate" title={issue.assigned_to_name}>
+                      <div className="bg-[#FFFAE6] text-[#FF8B00] border border-[#FFE380] px-2 py-1 rounded-[3px] font-bold text-[11px] max-w-[140px] truncate" title={issue.assigned_to_name}>
                         🍺 Held by: {issue.assigned_to_name}
                       </div>
                       {issue.assigned_to_id === user.id && (
-                        <button onClick={() => toggleBeer(issue.id, issue.assigned_to_id)} className="text-[11px] font-medium text-[#5E6C84] hover:text-[#0052CC] hover:underline">
+                        <button onClick={() => toggleBeer(issue.id, issue.assigned_to_id)} className="text-[11px] font-semibold text-[#5E6C84] hover:text-[#0052CC] hover:underline">
                           Unassign
                         </button>
                       )}
                     </div>
                   ) : (
-                    <button onClick={() => toggleBeer(issue.id, null)} className="bg-[rgba(9,30,66,0.04)] text-[#42526E] text-xs font-medium px-3 py-1.5 rounded-[3px] hover:bg-[rgba(9,30,66,0.08)] transition-colors">
+                    <button onClick={() => toggleBeer(issue.id, null)} className="bg-[rgba(9,30,66,0.04)] text-[#42526E] text-xs font-bold px-3 py-1.5 rounded-[3px] hover:bg-[rgba(9,30,66,0.08)] transition-colors">
                       Hold My Beer
                     </button>
                   )}
@@ -347,7 +436,7 @@ export default function IssueCenter() {
                   {(user.id === issue.user_id || user.user_metadata?.role === 'admin') && (
                     <button 
                       onClick={() => deleteIssue(issue.id, issue.user_id)} 
-                      className="text-[#5E6C84] hover:text-[#DE350B] text-[11px] font-medium p-1.5 rounded hover:bg-[#FFEBE6] transition-colors md:opacity-0 group-hover:opacity-100"
+                      className="text-[#5E6C84] hover:text-[#DE350B] text-[11px] font-bold p-1.5 rounded hover:bg-[#FFEBE6] transition-colors md:opacity-0 group-hover:opacity-100"
                       title="Delete Issue"
                     >
                       Delete
