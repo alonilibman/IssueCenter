@@ -81,7 +81,7 @@ export default function AuthPage() {
       <div className="bg-white border-[6px] border-black p-10 rounded-[3rem] shadow-[20px_20px_0px_0px_rgba(0,0,0,1)] w-full max-w-md">
         
         <h1 className="text-5xl font-black italic tracking-tighter mb-10 text-center uppercase leading-none">
-          ISSUE<br/>ACCESS
+          ISSUE<br/>CENTER
         </h1>
 
         <div className="flex gap-2 mb-10 bg-slate-100 p-1.5 rounded-[1.5rem]">
